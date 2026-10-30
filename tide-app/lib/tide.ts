@@ -137,3 +137,93 @@ export function getCurrentPredictedLevel(
 
   return closest.height_m;
 }
+
+export type TideDirection = "rising" | "falling";
+
+export type TideStatus = {
+  direction: TideDirection;
+  next: TideExtreme | null;
+};
+
+export function getTideStatus(
+  extremes: TideExtreme[],
+  nowMs: number = Date.now()
+): TideStatus | null {
+  if (extremes.length === 0) return null;
+
+  const sorted = [...extremes].sort(
+    (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
+  );
+
+  const next = sorted.find((e) => new Date(e.time).getTime() > nowMs) ?? null;
+
+  if (next) {
+    return { direction: next.type === "HIGH" ? "rising" : "falling", next };
+  }
+
+  const last = sorted[sorted.length - 1];
+  return { direction: last.type === "HIGH" ? "falling" : "rising", next: null };
+}
+
+export function formatCountdown(ms: number): string {
+  const totalMinutes = Math.max(0, Math.round(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} min`;
+  return `${hours} h ${minutes} min`;
+}
+
+
+export function getTideDirection(
+  timeline: TideTimelinePoint[],
+  nowMs: number = Date.now()
+): TideDirection | null {
+  const points = timeline
+    .map((point) => ({
+      time: new Date(point.time).getTime(),
+      height: point.height_m,
+    }))
+    .filter(
+      (point) =>
+        Number.isFinite(point.time) &&
+        Number.isFinite(point.height)
+    )
+    .sort((a, b) => a.time - b.time);
+
+  if (points.length < 2) return null;
+
+  // Find the most recent point at or before now,
+  // and the next predicted point after now.
+  let previous = -1;
+
+  for (let i = 0; i < points.length; i++) {
+    if (points[i].time <= nowMs) {
+      previous = i;
+    } else {
+      break;
+    }
+  }
+
+  let first: number;
+  let second: number;
+
+  if (previous >= 0 && previous < points.length - 1) {
+    first = previous;
+    second = previous + 1;
+  } else if (previous === -1) {
+    first = 0;
+    second = 1;
+  } else {
+    first = points.length - 2;
+    second = points.length - 1;
+  }
+
+  const difference =
+    points[second].height - points[first].height;
+
+  if (difference > 0.015) return "rising";
+  if (difference < -0.015) return "falling";
+
+  // Avoid claiming a direction when the change is negligible.
+  return null;
+}

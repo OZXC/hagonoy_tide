@@ -1,12 +1,7 @@
 
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import Svg, {
-  Circle,
-  Line,
-  Polyline,
-  Text as SvgText,
-} from "react-native-svg";
+import Svg, {Circle,Line,Polyline,Text as SvgText,} from "react-native-svg";
 import type { TideTimelinePoint } from "../lib/tide";
 
 type WeeklyDay = {

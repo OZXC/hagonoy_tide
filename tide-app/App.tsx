@@ -1,10 +1,26 @@
 
 import { useEffect, useState } from "react";
-import {View,Text,StyleSheet,TouchableOpacity,SafeAreaView,ScrollView,StatusBar,ActivityIndicator,Pressable,} from "react-native";
-import Svg, {Circle,Line,Polyline,} from "react-native-svg";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  ActivityIndicator,
+  Pressable,
+} from "react-native";
 import {fetchTodayTides, fetchTodayTimeline, getCurrentPredictedLevel, getManilaDate, shiftDate, type TideExtreme,} from "./lib/tide";
 import TideList from "./components/TideList";
 import WaveAnimation from "./components/WaveAnimation";
+import { useNow } from "./lib/useNow";
+import {
+  getTideStatus,
+  getTideDirection,
+} from "./lib/tide";
+
+import TideStatusCard from "./components/TideStatusCard";
 
 type ViewMode = "daily" | "weekly";
 
@@ -41,6 +57,7 @@ export default function App() {
   const [extremes, setExtremes] = useState<TideExtreme[]>([]);
   const [timeline, setTimeline] = useState<
     Awaited<ReturnType<typeof fetchTodayTimeline>>
+    
   >([]);
 
   const [weeklyDays, setWeeklyDays] = useState<WeeklyDay[]>([]);
@@ -49,10 +66,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [reloadKey, setReloadKey] = useState(0);
-
+  const nowMs = useNow();
   const todayDate = getManilaDate();
   const isToday = selectedDate === todayDate;
+  const nextTideStatus = getTideStatus(extremes, nowMs);
 
+const tideDirection =
+  selectedDate === getManilaDate()
+    ? getTideDirection(timeline, nowMs)
+    : null;
   const displayDate = formatDate(selectedDate, {
     weekday: "long",
     month: "long",
@@ -153,6 +175,39 @@ export default function App() {
     ? getCurrentPredictedLevel(timeline, now)
     : null;
 
+  // Estimate tide direction from adjacent predictions in the timeline.
+  const currentTimelineIndex = timeline.reduce((latestIndex, point, index) => {
+    return new Date(point.time).getTime() <= now.getTime() ? index : latestIndex;
+  }, -1);
+  const previousTimelinePoint = currentTimelineIndex > 0
+    ? timeline[currentTimelineIndex - 1]
+    : null;
+  const currentTimelinePoint = currentTimelineIndex >= 0
+    ? timeline[currentTimelineIndex]
+    : null;
+  const tideTrend = currentTimelinePoint && previousTimelinePoint
+    ? currentTimelinePoint.height_m - previousTimelinePoint.height_m > 0.015
+      ? "RISING"
+      : currentTimelinePoint.height_m - previousTimelinePoint.height_m < -0.015
+        ? "FALLING"
+        : "STEADY"
+    : null;
+  const nearestTideExtreme = isToday
+    ? extremes
+        .map((event) => ({
+          event,
+          difference: Math.abs(new Date(event.time).getTime() - now.getTime()),
+        }))
+        .filter(({ difference }) => difference <= 30 * 60 * 1000)
+        .sort((a, b) => a.difference - b.difference)[0]?.event
+    : null;
+ const tideStatusLabel = nearestTideExtreme
+  ? nearestTideExtreme.type === "LOW"
+    ? "LOW TIDE"
+    : "HIGH TIDE"
+  : tideTrend
+    ? `${tideTrend} TIDE`
+    : null;
   const highTides = extremes.filter((event) => event.type === "HIGH");
   const lowTides = extremes.filter((event) => event.type === "LOW");
 
@@ -163,7 +218,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F5F2E9" />
+      <StatusBar barStyle="dark-content" backgroundColor="#F4F1E8" />
 
       <ScrollView contentContainerStyle={styles.page}>
         {/* Header */}
@@ -174,7 +229,7 @@ export default function App() {
               Your tides, at a glance.
             </Text>
           </View>
-
+    
           <View style={styles.locationBadge}>
             <Text style={styles.locationIcon}>⌖</Text>
             <Text style={styles.locationText}>Hagonoy, Bulacan</Text>
@@ -267,16 +322,36 @@ export default function App() {
             <View style={styles.heroCard}>
               <View style={styles.heroHeader}>
                 <View>
-                  <Text style={styles.cardEyebrow}>WATER LEVEL</Text>
+                  <Text style={styles.cardEyebrow}>WATER LEVEL</Text> 
+                  <TideStatusCard status={nextTideStatus} direction={tideDirection} nowMs={nowMs} />
                   <Text style={styles.heroTitle}>Bay conditions</Text>
                 </View>
 
-                <View style={styles.liveBadge}>
-                  <View style={styles.liveDot} />
-                  <Text style={styles.liveText}>API DATA</Text>
-                </View>
-              </View>
+                <View
+                    style={[
+                      styles.liveBadge,
+                      (tideTrend === "RISING" || tideStatusLabel === "HIGH TIDE") &&
+                        styles.risingBadge,
+                      (tideTrend === "FALLING" || tideStatusLabel === "LOW TIDE") &&
+                        styles.fallingBadge,
+                    ]}
+                  >
+                    <Text style={styles.trendArrow}>
+                      {tideStatusLabel === "LOW TIDE" ||
+                      tideStatusLabel === "HIGH TIDE"
+                        ? "•"
+                        : tideTrend === "RISING"
+                          ? "↑"
+                          : tideTrend === "FALLING"
+                            ? "↓"
+                            : "→"}
+                    </Text>
 
+                    <Text style={styles.liveText}>
+                      {tideStatusLabel ?? "TIDE TREND"}
+                    </Text>
+                </View>
+              </View>          
               {loading ? (
                 <View style={styles.feedback}>
                   <ActivityIndicator color="#1D6E63" size="large" />
@@ -306,7 +381,7 @@ export default function App() {
                       </View>
 
                       <Text style={styles.levelCaption}>
-                        Current predicted level · Philippine time
+                        Predicted water level · Philippine time
                       </Text>
 
                       <View style={styles.waveCard}>
@@ -537,19 +612,22 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#F5F2E9",
+    backgroundColor: "#F4F1E8",
   },
   page: {
     paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 36,
+    paddingTop: 20,
+    paddingBottom: 40,
+    maxWidth: 760,
+    width: "100%",
+    alignSelf: "center",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    marginBottom: 18,
+    marginBottom: 22,
   },
   brandContainer: {
     flexShrink: 1,
@@ -558,15 +636,16 @@ const styles = StyleSheet.create({
     fontSize: 27,
     fontWeight: "800",
     letterSpacing: 4,
-    color: "#162F2B",
+    color: "#102D35",
   },
   tagline: {
     fontSize: 12,
-    color: "#71817A",
-    marginTop: 4,
+    color: "#73817D",
+    marginTop: 5,
+    letterSpacing: 0.2,
   },
   locationBadge: {
-    backgroundColor: "#E7E9DE",
+    backgroundColor: "#E6E9E0",
     borderRadius: 18,
     paddingHorizontal: 11,
     paddingVertical: 9,
@@ -574,6 +653,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 5,
     flexShrink: 1,
+    borderWidth: 1,
+    borderColor: "#D8DED4",
   },
   locationIcon: {
     fontSize: 17,
@@ -581,28 +662,35 @@ const styles = StyleSheet.create({
   },
   locationText: {
     fontSize: 11,
-    fontWeight: "600",
+    fontWeight: "700",
     color: "#31534B",
   },
   modeSelector: {
     flexDirection: "row",
-    backgroundColor: "#E8EBE0",
-    borderRadius: 14,
+    backgroundColor: "#E5E8DF",
+    borderRadius: 15,
     padding: 4,
-    marginBottom: 20,
+    marginBottom: 22,
+    borderWidth: 1,
+    borderColor: "#DDE1D7",
   },
   modeButton: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 11,
+    paddingVertical: 12,
     borderRadius: 11,
   },
   modeButtonActive: {
-    backgroundColor: "#1D6E63",
+    backgroundColor: "#123640",
+    shadowColor: "#102D35",
+    shadowOpacity: 0.14,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   modeText: {
-    color: "#526D63",
+    color: "#61736C",
     fontSize: 13,
     fontWeight: "700",
   },
@@ -616,67 +704,77 @@ const styles = StyleSheet.create({
     marginBottom: 22,
     padding: 12,
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
+    borderRadius: 19,
     borderWidth: 1,
-    borderColor: "#E7E5DA",
+    borderColor: "#E5E2D8",
+    shadowColor: "#243C39",
+    shadowOpacity: 0.035,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 1,
   },
   dateArrow: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: "#EDF2F5",
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: "#EDF1EE",
     alignItems: "center",
     justifyContent: "center",
   },
   arrowText: {
-    fontSize: 32,
-    lineHeight: 36,
-    color: "#16232B",
+    fontSize: 30,
+    lineHeight: 34,
+    color: "#163740",
   },
   dateInfo: {
     flex: 1,
     alignItems: "center",
-    paddingHorizontal: 4,
+    paddingHorizontal: 5,
   },
   dateTitle: {
     fontSize: 16,
-    fontWeight: "700",
-    color: "#16232B",
+    fontWeight: "800",
+    color: "#16333A",
     textAlign: "center",
   },
   dateSubtitle: {
-    marginTop: 4,
-    fontSize: 12,
-    color: "#4C5B63",
+    marginTop: 5,
+    fontSize: 11,
+    color: "#7B8983",
   },
   todayButton: {
     marginTop: 8,
     fontSize: 12,
-    fontWeight: "600",
-    color: "#1D6E63",
+    fontWeight: "700",
+    color: "#197768",
   },
   dateRow: {
-    marginBottom: 14,
+    marginBottom: 13,
     gap: 5,
   },
   sectionEyebrow: {
     fontSize: 10,
     fontWeight: "800",
     letterSpacing: 2,
-    color: "#71817A",
+    color: "#82908A",
   },
   date: {
     fontSize: 15,
-    color: "#263D37",
+    color: "#344C47",
     fontWeight: "600",
   },
   heroCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 18,
+    backgroundColor: "#12343D",
+    borderRadius: 26,
+    padding: 20,
     borderWidth: 1,
-    borderColor: "#E7E5DA",
-    marginBottom: 16,
+    borderColor: "#214852",
+    marginBottom: 17,
+    shadowColor: "#102D35",
+    shadowOpacity: 0.14,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   heroHeader: {
     flexDirection: "row",
@@ -686,69 +784,88 @@ const styles = StyleSheet.create({
   cardEyebrow: {
     fontSize: 10,
     fontWeight: "800",
-    letterSpacing: 1.7,
-    color: "#71817A",
+    letterSpacing: 1.8,
+    color: "#A7C2BB",
   },
   heroTitle: {
-    fontSize: 19,
+    fontSize: 20,
     fontWeight: "700",
-    color: "#162F2B",
-    marginTop: 5,
+    color: "#F8F7F0",
+    marginTop: 6,
   },
   liveBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#EAF3EB",
-    paddingHorizontal: 9,
-    paddingVertical: 6,
+    backgroundColor: "#214A48",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#32615A",
   },
   liveDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#3E8661",
+    backgroundColor: "#9DDBB6",
   },
   liveText: {
     fontSize: 9,
     fontWeight: "800",
-    color: "#3E7355",
-    letterSpacing: 0.7,
+    color: "#C4E7D1",
+    letterSpacing: 0.8,
+  },
+  risingBadge: {
+    backgroundColor: "#244F43",
+    borderColor: "#4B8C70",
+  },
+  fallingBadge: {
+    backgroundColor: "#493B35",
+    borderColor: "#80604E",
+  },
+  trendArrow: {
+    fontSize: 14,
+    lineHeight: 14,
+    fontWeight: "900",
+    color: "#D4F0E6",
   },
   levelRow: {
     flexDirection: "row",
     alignItems: "baseline",
-    marginTop: 20,
+    marginTop: 24,
   },
   levelNumber: {
-    fontSize: 46,
+    fontSize: 54,
     fontWeight: "700",
-    color: "#1D6E63",
-    letterSpacing: -1.5,
+    color: "#D4F0E6",
+    letterSpacing: -2,
   },
   levelUnit: {
-    fontSize: 19,
-    fontWeight: "600",
-    color: "#66877F",
-    marginLeft: 6,
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#A7CFC3",
+    marginLeft: 7,
   },
   levelCaption: {
     fontSize: 11,
-    color: "#71817A",
-    marginBottom: 18,
+    color: "#B2C9C4",
+    marginTop: 2,
+    marginBottom: 19,
   },
   waveCard: {
-    backgroundColor: "#E6EFED",
-    borderRadius: 18,
+    backgroundColor: "#DDECE7",
+    borderRadius: 19,
     paddingVertical: 12,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#BFD9D0",
   },
   disclaimer: {
     fontSize: 10,
     lineHeight: 15,
-    color: "#78857F",
-    marginTop: 12,
+    color: "#B0C5C0",
+    marginTop: 13,
   },
   feedback: {
     minHeight: 150,
@@ -759,7 +876,7 @@ const styles = StyleSheet.create({
   },
   feedbackText: {
     fontSize: 13,
-    color: "#66766F",
+    color: "#697A73",
     textAlign: "center",
   },
   errorText: {
@@ -768,14 +885,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   retryButton: {
-    backgroundColor: "#1D6E63",
+    backgroundColor: "#D7EEE5",
+    borderWidth: 1,
+    borderColor: "#A9D4C5",
     paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 12,
   },
   retryText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
+    color: "#15584E",
+    fontWeight: "800",
     fontSize: 12,
   },
   summaryRow: {
@@ -785,26 +904,33 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: "#E8EBE0",
-    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 19,
     padding: 16,
+    borderWidth: 1,
+    borderColor: "#E5E2D8",
+    shadowColor: "#243C39",
+    shadowOpacity: 0.035,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 1,
   },
   summaryLabel: {
     fontSize: 10,
-    letterSpacing: 1,
+    letterSpacing: 1.1,
     fontWeight: "800",
-    color: "#61766C",
+    color: "#7B8982",
   },
   summaryCount: {
-    fontSize: 30,
-    fontWeight: "700",
-    color: "#1D5147",
+    fontSize: 31,
+    fontWeight: "800",
+    color: "#153E42",
     marginTop: 9,
   },
   summaryHint: {
-    fontSize: 11,
-    color: "#71817A",
-    marginTop: 3,
+    fontSize: 10,
+    color: "#84918A",
+    marginTop: 4,
   },
   tideSection: {
     marginBottom: 16,
@@ -817,32 +943,34 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 21,
-    fontWeight: "700",
-    color: "#162F2B",
+    fontWeight: "800",
+    color: "#16343B",
   },
   sectionSubtitle: {
     fontSize: 12,
-    color: "#71817A",
+    color: "#7A8982",
     marginTop: 4,
   },
   eventBadge: {
-    backgroundColor: "#E7E9DE",
+    backgroundColor: "#E3EAE3",
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#D7E0D8",
   },
   eventBadgeText: {
     fontSize: 9,
     fontWeight: "800",
-    color: "#31534B",
-    letterSpacing: 0.5,
+    color: "#355B53",
+    letterSpacing: 0.6,
   },
   listCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 18,
+    borderRadius: 19,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: "#E7E5DA",
+    borderColor: "#E5E2D8",
     overflow: "hidden",
   },
   weekHeading: {
@@ -854,9 +982,9 @@ const styles = StyleSheet.create({
   },
   weekCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 18,
+    borderRadius: 19,
     borderWidth: 1,
-    borderColor: "#E7E5DA",
+    borderColor: "#E5E2D8",
     padding: 16,
   },
   weekCardTop: {
@@ -868,18 +996,18 @@ const styles = StyleSheet.create({
   weekDayName: {
     fontSize: 17,
     fontWeight: "800",
-    color: "#162F2B",
+    color: "#16343B",
   },
   weekDate: {
     fontSize: 12,
-    color: "#71817A",
+    color: "#7A8982",
     marginTop: 3,
   },
   weekArrow: {
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: "#E8EBE0",
+    backgroundColor: "#E6ECE6",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -901,7 +1029,7 @@ const styles = StyleSheet.create({
     fontSize: 9,
     letterSpacing: 0.8,
     fontWeight: "800",
-    color: "#71817A",
+    color: "#7A8982",
   },
   weekStatValue: {
     fontSize: 23,
@@ -924,28 +1052,28 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "#EDF0E8",
     fontSize: 11,
-    fontWeight: "600",
-    color: "#1D6E63",
+    fontWeight: "700",
+    color: "#197768",
   },
   weekDisclaimer: {
     fontSize: 11,
     lineHeight: 17,
-    color: "#78857F",
+    color: "#7A8982",
     marginTop: 18,
   },
   footer: {
     alignItems: "center",
-    paddingTop: 24,
+    paddingTop: 26,
     gap: 5,
   },
   footerBrand: {
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 3,
-    color: "#526D63",
+    color: "#48675F",
   },
   footerText: {
     fontSize: 11,
-    color: "#8A948A",
+    color: "#87928A",
   },
 });

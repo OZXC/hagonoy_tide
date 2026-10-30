@@ -8,10 +8,25 @@ import httpx
 
 BASE_URL = "https://api.openwaters.io/tides"
 SOURCE_ID = "ticon"
-STATION_ID = "manila-370-phl-uhslc_fd"
+STATION_ID = "manila-370a-phl-uhslc_rq"
 
 PH_TIMEZONE = ZoneInfo("Asia/Manila")
 TIMEOUT_SECONDS = 15.0
+url = (
+    f"{BASE_URL}/stations/"
+    f"{SOURCE_ID}/{STATION_ID}/extremes"
+)
+
+def raise_for_upstream_error(response: httpx.Response) -> None:
+    try:
+        response.raise_for_status()  # Check the HTTP response status
+    except httpx.HTTPStatusError:
+        print(
+            "OpenWaters API error:",
+            response.status_code,
+            response.text[:1000],
+        )
+        raise  # Re-raise the original exception
 
 
 def get_day_range(selected_date: date) -> tuple[str, str]:
@@ -52,7 +67,7 @@ async def fetch_extremes(selected_date: date) -> dict:
 
     async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
         response = await client.get(url, params=params)
-        response.raise_for_status()
+        raise_for_upstream_error(response)
         payload = response.json()
 
     events = []
@@ -102,7 +117,7 @@ async def fetch_timeline(selected_date: date) -> dict:
 
     async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
         response = await client.get(url, params=params)
-        response.raise_for_status()
+        raise_for_upstream_error(response)
         payload = response.json()
 
     timeline = []
